@@ -6,23 +6,25 @@ const closeCart = document.getElementById("closeCart");
 const cartItems = document.getElementById("cartItems");
 const cartCount = document.getElementById("cartCount");
 const addToCartBtns = document.querySelectorAll(".add-to-cart-btn");
-const checkoutBtn = document.getElementById("checkoutBtn");
 
-// Öffnen/Schließen Warenkorb
+// Öffnen / Schließen Warenkorb
 cartBtn.onclick = () => {
   cartSidebar.classList.add("open");
   overlay.classList.add("active");
+  initPayPalButton(); // PayPal Buttons laden, wenn Warenkorb geöffnet wird
 };
+
 closeCart.onclick = () => {
   cartSidebar.classList.remove("open");
   overlay.classList.remove("active");
 };
+
 overlay.onclick = () => {
   cartSidebar.classList.remove("open");
   overlay.classList.remove("active");
 };
 
-// Produkt hinzufügen
+// Produkt in den Warenkorb legen
 addToCartBtns.forEach((btn) => {
   btn.onclick = function () {
     const card = btn.closest(".product-card");
@@ -30,10 +32,11 @@ addToCartBtns.forEach((btn) => {
     const title = card.dataset.title;
     const price = parseFloat(card.dataset.price);
 
-    // Prüfen, ob das Produkt schon im Warenkorb ist
     const existing = cart.find((item) => item.id === id);
     if (!existing) {
-      cart.push({ id, title, price, qty: 1 }); // Menge immer 1
+      cart.push({ id, title, price, qty: 1 });
+    } else {
+      existing.qty += 1; // Falls du doch mal mehrere erlauben willst
     }
 
     updateCart();
@@ -42,7 +45,9 @@ addToCartBtns.forEach((btn) => {
   };
 });
 
-// Warenkorb aus Local Storage laden
+// ────────────────────────────────────────────────
+// Local Storage Funktionen
+// ────────────────────────────────────────────────
 function loadCart() {
   const saved = localStorage.getItem("cart");
   if (saved) {
@@ -52,20 +57,24 @@ function loadCart() {
         cart.length = 0;
         cart.push(...arr);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn("Fehler beim Laden des Warenkorbs aus localStorage", e);
+    }
   }
 }
 
-// Warenkorb in Local Storage speichern
 function saveCart() {
   localStorage.setItem("cart", JSON.stringify(cart));
 }
 
-// Warenkorb aktualisieren
+// ────────────────────────────────────────────────
+// Warenkorb UI aktualisieren
+// ────────────────────────────────────────────────
 function updateCart() {
   cartItems.innerHTML = "";
   cartCount.textContent = `(${cart.reduce((sum, item) => sum + item.qty, 0)})`;
   saveCart();
+
   if (cart.length === 0) {
     cartItems.innerHTML = "<p>Dein Warenkorb ist leer.</p>";
     return;
@@ -92,65 +101,167 @@ function updateCart() {
 
   cart.forEach((item) => {
     total += item.price * item.qty;
+
     const row = document.createElement("tr");
     row.innerHTML = `
       <td>${item.title}</td>
       <td style="text-align:center;">${item.qty}</td>
-      <td style="text-align:right; vertical-align:middle;">${formatPrice(
-        item.price * item.qty
-      )} €</td>
-      <td style="vertical-align:middle;"><button class="remove-cart-item" data-id="${
-        item.id
-      }">✖</button></td>
+      <td style="text-align:right;">${formatPrice(item.price * item.qty)} €</td>
+      <td style="vertical-align:middle;">
+        <button class="remove-cart-item" data-id="${item.id}">✖</button>
+      </td>
     `;
     table.querySelector("tbody").appendChild(row);
   });
+
   cartItems.appendChild(table);
 
   const totalDiv = document.createElement("div");
   totalDiv.className = "cart-total-info";
   totalDiv.innerHTML = `
-    <div class="cart-total" style="margin-top:10px;">Gesamt: ${formatPrice(
-      total
-    )} €</div>
-    <div class="cart-legal">Alle Preise inkl. gesetzl. MwSt.</div>
+    <div class="cart-total" style="margin-top:16px; font-weight:bold; font-size:1.1rem;">
+      Gesamt: ${formatPrice(total)} €
+    </div>
+    <div class="cart-legal" style="font-size:0.85rem; color:#666; margin-top:4px;">
+      Alle Preise inkl. gesetzl. MwSt.
+    </div>
   `;
   cartItems.appendChild(totalDiv);
 
-  // Entfernen-Button
+  // Entfernen-Buttons
   document.querySelectorAll(".remove-cart-item").forEach((btn) => {
     btn.onclick = function () {
       const id = btn.dataset.id;
       const idx = cart.findIndex((item) => item.id === id);
-      if (idx > -1) cart.splice(idx, 1);
-      updateCart();
+      if (idx > -1) {
+        cart.splice(idx, 1);
+        updateCart();
+      }
     };
   });
 }
 
-// --- Produkte Dots ---
+// ────────────────────────────────────────────────
+// PayPal Smart Buttons
+// ────────────────────────────────────────────────
+let paypalButtonsInitialized = false;
+
+function initPayPalButton() {
+  if (paypalButtonsInitialized) return;
+  if (typeof paypal === "undefined") {
+    console.warn("PayPal SDK noch nicht geladen – warte auf Script");
+    return;
+  }
+
+  paypal
+    .Buttons({
+      style: {
+        shape: "rect",
+        color: "blue",
+        layout: "vertical",
+        label: "paypal",
+        height: 48,
+        tagline: false,
+      },
+
+      createOrder: function (data, actions) {
+        if (cart.length === 0) {
+          alert("Warenkorb ist leer!");
+          return;
+        }
+
+        const total = cart
+          .reduce((sum, item) => sum + item.price * item.qty, 0)
+          .toFixed(2);
+
+        const items = cart.map((item) => ({
+          name: item.title,
+          unit_amount: { value: item.price.toFixed(2), currency_code: "EUR" },
+          quantity: item.qty.toString(),
+        }));
+
+        return actions.order.create({
+          purchase_units: [
+            {
+              amount: {
+                currency_code: "EUR",
+                value: total,
+                breakdown: {
+                  item_total: { value: total, currency_code: "EUR" },
+                },
+              },
+              items: items,
+            },
+          ],
+          application_context: {
+            shipping_preference: "NO_SHIPPING", // Digitale Produkte
+            brand_name: "LernCoding",
+            locale: "de-DE",
+            user_action: "PAY_NOW",
+          },
+        });
+      },
+
+      onApprove: function (data, actions) {
+        return actions.order.capture().then(function (orderData) {
+          alert(
+            "Vielen Dank! Deine Zahlung war erfolgreich.\nBestellnummer: " +
+              orderData.id,
+          );
+
+          // Warenkorb leeren
+          cart.length = 0;
+          updateCart();
+
+          // Warenkorb schließen
+          cartSidebar.classList.remove("open");
+          overlay.classList.remove("active");
+
+          // Optional: Weiterleitung zu Dankesseite
+          // window.location.href = "/danke?order=" + orderData.id;
+        });
+      },
+
+      onError: function (err) {
+        console.error("PayPal Fehler:", err);
+        alert(
+          "Leider ist ein Fehler bei der Zahlung aufgetreten.\nBitte versuche es erneut oder kontaktiere uns.",
+        );
+      },
+
+      onCancel: function () {
+        // Optional: Hinweis bei Abbruch
+        // alert("Zahlung abgebrochen.");
+      },
+    })
+    .render("#paypal-button-container");
+
+  paypalButtonsInitialized = true;
+}
+
+// ────────────────────────────────────────────────
+// Restliche Features (Produkt-Dots, FAQ, Back-to-Top, Header Scroll)
+// ────────────────────────────────────────────────
+
 const productScroll = document.getElementById("productScroll");
 const productDotsWrap = document.getElementById("productDots");
 const productDots = productDotsWrap?.children;
 
-if (window.innerWidth < 1024) {
+if (window.innerWidth < 1024 && productDots) {
   productScroll.addEventListener("scroll", () => {
     const scrollPos = productScroll.scrollLeft;
-    const cardWidth = productScroll.children[0].offsetWidth + 16; // inkl. gap
+    const cardWidth = productScroll.children[0].offsetWidth + 16; // gap berücksichtigen
     const index = Math.round(scrollPos / cardWidth);
-
     for (let i = 0; i < productDots.length; i++) {
       productDots[i].classList.remove("active");
     }
     productDots[index]?.classList.add("active");
   });
-} else {
+} else if (productDotsWrap) {
   productDotsWrap.style.display = "none";
 }
 
-// --- FAQ Akkordeon ---
-const faqItems = document.querySelectorAll(".faq-item");
-
+// FAQ Akkordeon
 document.querySelectorAll(".faq-question").forEach((btn) => {
   btn.addEventListener("click", function () {
     const item = btn.closest(".faq-item");
@@ -158,13 +269,12 @@ document.querySelectorAll(".faq-question").forEach((btn) => {
   });
 });
 
-// --- Back-to-top (nur Mobile) ---
+// Back-to-top (Mobile)
 const backToTop = document.getElementById("backToTop");
 
 function toggleBackToTop() {
-  const isMobile = window.innerWidth <= 768;
   if (!backToTop) return;
-
+  const isMobile = window.innerWidth <= 768;
   if (isMobile && window.scrollY > 300) {
     backToTop.classList.add("show");
   } else {
@@ -180,6 +290,7 @@ backToTop?.addEventListener("click", () => {
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
 
+// Header Scroll-Effekt
 const header = document.querySelector("header");
 window.addEventListener("scroll", () => {
   if (window.scrollY > 10) {
@@ -189,9 +300,14 @@ window.addEventListener("scroll", () => {
   }
 });
 
-// Beim Laden der Seite Warenkorb laden
+// ────────────────────────────────────────────────
+// Start
+// ────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   loadCart();
   updateCart();
   toggleBackToTop();
+
+  // Optional: PayPal schon beim Laden initialisieren (wenn du willst)
+  // initPayPalButton();
 });
